@@ -186,7 +186,24 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                  }
             }
             other => {
-                 tracing::debug!("[Response] Unmapped tool call: {} (args: {:?})", other, obj.keys());
+                 // [NEW] [Issue #785] Generic Property Mapping for all tools
+                 // If a tool has "paths" (array of 1) but no "path", convert it.
+                 let mut path_to_inject = None;
+                 if !obj.contains_key("path") {
+                     if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
+                         if paths.len() == 1 {
+                             if let Some(p) = paths[0].as_str() {
+                                 path_to_inject = Some(p.to_string());
+                             }
+                         }
+                     }
+                 }
+                 
+                 if let Some(path) = path_to_inject {
+                     obj.insert("path".to_string(), serde_json::json!(path));
+                     tracing::debug!("[Response] Probabilistic fix for tool '{}': paths[0] → path(\"{}\")", other, path);
+                 }
+                 tracing::debug!("[Response] Unmapped tool call processed via generic rules: {} (keys: {:?})", other, obj.keys());
             }
         }
     }

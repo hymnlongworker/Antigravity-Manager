@@ -742,7 +742,7 @@ fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str, ha
 fn build_contents(
     content: &MessageContent,
     is_assistant: bool,
-    claude_req: &ClaudeRequest,
+    _claude_req: &ClaudeRequest,
     is_thinking_enabled: bool,
     session_id: &str,
     allow_dummy_thought: bool,

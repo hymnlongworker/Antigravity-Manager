@@ -83,21 +83,39 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                     }
                 }
 
-                // [FIX #547] Handle "-n" parameter sent as string instead of boolean
-                // Gemini sometimes sends Unix-style flags as parameter names
-                if let Some(n_val) = obj.remove("-n") {
-                    if let Some(bool_val) = coerce_to_bool(&n_val) {
-                        // "-n" in grep usually means "line numbers" - map to appropriate param
-                        if !obj.contains_key("lineNumbers") {
-                            obj.insert("lineNumbers".to_string(), bool_val);
-                            tracing::debug!("[Streaming] Remapped Grep: -n → lineNumbers");
-                        }
+                // [NEW] [Issue #785] Ported from response.rs: additional grep mappings
+                // Map "includes" (Gemini) to "include" (Claude Code)
+                if let Some(includes) = obj.remove("includes") {
+                    if !obj.contains_key("include") {
+                         let include_val = if let Some(arr) = includes.as_array() {
+                             // Join array to comma-separated string if needed
+                             json!(arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(","))
+                         } else {
+                             includes
+                         };
+                         obj.insert("include".to_string(), include_val);
+                         tracing::debug!("[Streaming] Remapped Grep: includes → include");
+                    }
+                }
+                
+                // Map "ignore_case" or "case_insensitive" to "ignoreCase"
+                if let Some(ic) = obj.remove("ignore_case").or_else(|| obj.remove("case_insensitive")) {
+                    if !obj.contains_key("ignoreCase") {
+                        obj.insert("ignoreCase".to_string(), ic);
+                        tracing::debug!("[Streaming] Remapped Grep: ignore_case/case_insensitive → ignoreCase");
+                    }
+                }
+                
+                // Map "-n" (Unix flag) to "lineNumbers"
+                if let Some(n) = obj.remove("-n") {
+                    if !obj.contains_key("lineNumbers") {
+                        obj.insert("lineNumbers".to_string(), n);
+                        tracing::debug!("[Streaming] Remapped Grep: -n → lineNumbers");
                     }
                 }
 
-                // [FIX #547] Coerce all known boolean parameters from string to bool
-                let bool_params = ["ignoreCase", "lineNumbers", "caseSensitive", "regex", "wholeWord"];
-                for param in bool_params {
+                // [NEW] [Issue #785] Coerce various flags to boolean (Ported from response.rs)
+                for param in ["ignoreCase", "lineNumbers", "regex", "recursive", "wholeWord"] {
                     if let Some(val) = obj.get(param).cloned() {
                         if val.is_string() {
                             if let Some(bool_val) = coerce_to_bool(&val) {
@@ -163,7 +181,24 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                  }
             }
             other => {
-                 tracing::debug!("[Streaming] Unmapped tool call: {} (args: {:?})", other, obj.keys());
+                 // [NEW] [Issue #785] Generic Property Mapping for all tools
+                 // If a tool has "paths" (array of 1) but no "path", convert it.
+                 let mut path_to_inject = None;
+                 if !obj.contains_key("path") {
+                     if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
+                         if paths.len() == 1 {
+                             if let Some(p) = paths[0].as_str() {
+                                 path_to_inject = Some(p.to_string());
+                             }
+                         }
+                     }
+                 }
+                 
+                 if let Some(path) = path_to_inject {
+                     obj.insert("path".to_string(), json!(path));
+                     tracing::debug!("[Streaming] Probabilistic fix for tool '{}': paths[0] → path(\"{}\")", other, path);
+                 }
+                 tracing::debug!("[Streaming] Unmapped tool call processed via generic rules: {} (keys: {:?})", other, obj.keys());
             }
         }
     }
