@@ -394,6 +394,30 @@ response = client.chat.completions.create(
                 - 透明化：详细日志记录每层压缩的触发和效果
                 - 容错性：Layer 3 失败时返回友好错误提示
             -   **影响范围**: 彻底解决长对话场景下的上下文管理问题,显著降低 API 成本,确保工具调用链完整性
+        -   **[核心优化] 上下文估算与缩放算法增强 (PR #925)**:
+            -   **背景**: 在 Claude Code 等长对话场景下,固定的 Token 估算算法（3.5 字符/token）在中英文混排时误差极大,导致三层压缩逻辑无法及时触发,最终仍会报 "Prompt is too long" 错误
+            -   **解决方案 - 动态校准 + 多语言感知**:
+                - **多语言感知估算**:
+                    - **ASCII/英文**: 约为 4 字符/Token（针对代码和英文文档优化）
+                    - **Unicode/CJK (中日韩)**: 约为 1.5 字符/Token（针对 Gemini/Claude 分词特点）
+                    - **安全余量**: 在计算结果基础上额外增加 15% 的安全冗余
+                - **动态校准器 (`estimation_calibrator.rs`)**:
+                    - **自学习机制**: 记录每次请求的"估算 Token 数"与 Google API 返回的"实际 Token 数"
+                    - **校准因子**: 使用指数移动平均 (EMA, 60% 旧比例 + 40% 新比例) 维护校准系数
+                    - **保守初始化**: 初始校准系数为 2.0,确保系统运行初期极其保守地触发压缩
+                    - **自动收敛**: 根据实际数据自动修正,使估算值越来越接近真实值
+                - **整合三层压缩框架**:
+                    - 在所有估算环节（初始估算、Layer 1/2/3 后重新估算）使用校准后的 Token 数
+                    - 每层压缩后记录详细的校准因子日志,便于调试和监控
+            -   **技术实现**:
+                - **新增模块**: `estimation_calibrator.rs` - 全局单例校准器,线程安全
+                - **修改文件**: `claude.rs`, `streaming.rs`, `context_manager.rs`
+                - **校准数据流**: 流式响应收集器 → 提取真实 Token 数 → 更新校准器 → 下次请求使用新系数
+            -   **用户体验**:
+                - **透明化**: 日志中显示原始估算值、校准后估算值、校准因子,便于理解系统行为
+                - **自适应**: 系统会根据用户的实际使用模式（中英文比例、代码量等）自动调整
+                - **精准触发**: 压缩逻辑基于更准确的估算值,大幅降低"漏判"和"误判"概率
+            -   **影响范围**: 显著提升上下文管理的精准度,解决 Issue #902 和 #867 中反馈的自动压缩失效问题,确保长对话稳定性
         -   **[关键修复] Thinking 签名恢复逻辑优化**:
             -   **背景**: 在重试场景下,签名检查逻辑未检查 Session Cache,导致错误禁用 Thinking 模式,产生 0 token 请求和响应失败
             -   **问题表现**:
@@ -1618,6 +1642,18 @@ response = client.chat.completions.create(
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
 
 感谢所有为本项目付出汗水与智慧的开发者。
+
+## 🤝 鸣谢项目 (Special Thanks)
+
+本项目在开发过程中参考或借鉴了以下优秀开源项目的思路或代码，排名不分先后：
+
+*   [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)
+*   [Practical-Guide-to-Context-Engineering](https://github.com/WakeUp-Jin/Practical-Guide-to-Context-Engineering)
+*   [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+*   [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy)
+*   [aistudio-gemini-proxy](https://github.com/zhongruichen/aistudio-gemini-proxy)
+*   [gcli2api](https://github.com/su-kaka/gcli2api)
+
 *   **版权许可**: 基于 **CC BY-NC-SA 4.0** 许可，**严禁任何形式的商业行为**。
 *   **安全声明**: 本应用所有账号数据加密存储于本地 SQLite 数据库，除非开启同步功能，否则数据绝不离开您的设备。
 

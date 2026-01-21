@@ -260,6 +260,30 @@ print(response.choices[0].message.content)
                 - Transparent: Detailed logs record each layer's trigger and effect
                 - Fault-tolerant: Layer 3 returns friendly error on failure
             -   **Impact**: Completely resolves context management issues in long conversations, significantly reduces API costs, ensures tool call chain integrity
+        -   **[Core Optimization] Context Estimation and Scaling Algorithm Enhancement (PR #925)**:
+            -   **Background**: In long conversation scenarios like Claude Code, the fixed Token estimation algorithm (3.5 chars/token) has huge errors in mixed Chinese-English content, causing the 3-layer compression logic to fail to trigger in time, ultimately still reporting "Prompt is too long" errors
+            -   **Solution - Dynamic Calibration + Multi-language Awareness**:
+                - **Multi-language Aware Estimation**:
+                    - **ASCII/English**: ~4 chars/Token (optimized for code and English docs)
+                    - **Unicode/CJK (Chinese/Japanese/Korean)**: ~1.5 chars/Token (optimized for Gemini/Claude tokenization)
+                    - **Safety Margin**: Additional 15% safety buffer on top of calculated results
+                - **Dynamic Calibrator (`estimation_calibrator.rs`)**:
+                    - **Self-learning Mechanism**: Records "Estimated Token Count" vs Google API's "Actual Token Count" for each request
+                    - **Calibration Factor**: Uses Exponential Moving Average (EMA, 60% old ratio + 40% new ratio) to maintain calibration coefficient
+                    - **Conservative Initialization**: Initial calibration coefficient is 2.0, ensuring extremely conservative compression triggering in early system operation
+                    - **Auto-convergence**: Automatically corrects based on actual data, making estimates increasingly accurate
+                - **Integration with 3-Layer Compression Framework**:
+                    - Uses calibrated Token counts in all estimation stages (initial estimation, re-estimation after Layer 1/2/3)
+                    - Records detailed calibration factor logs after each compression layer for debugging and monitoring
+            -   **Technical Implementation**:
+                - **New Module**: `estimation_calibrator.rs` - Global singleton calibrator, thread-safe
+                - **Modified Files**: `claude.rs`, `streaming.rs`, `context_manager.rs`
+                - **Calibration Data Flow**: Streaming response collector → Extract actual Token count → Update calibrator → Next request uses new coefficient
+            -   **User Experience**:
+                - **Transparency**: Logs show raw estimate, calibrated estimate, and calibration factor for understanding system behavior
+                - **Adaptive**: System automatically adjusts based on user's actual usage patterns (Chinese-English ratio, code volume, etc.)
+                - **Precise Triggering**: Compression logic based on more accurate estimates, significantly reducing "false negatives" and "false positives"
+            -   **Impact**: Significantly improves context management precision, resolves automatic compression failure issues reported in Issue #902 and #867, ensures long conversation stability
         -   **[Critical Fix] Thinking Signature Recovery Logic Optimization**:
             -   **Background**: In retry scenarios, signature check logic didn't check Session Cache, causing incorrect Thinking mode disabling, resulting in 0 token requests and response failures
             -   **Symptoms**:
@@ -1176,6 +1200,18 @@ print(response.choices[0].message.content)
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
 
 Special thanks to all developers who have contributed to this project.
+
+## 🤝 Special Thanks
+
+This project has referenced or learned from the ideas or code of the following excellent open-source projects during its development (in no particular order):
+
+*   [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)
+*   [Practical-Guide-to-Context-Engineering](https://github.com/WakeUp-Jin/Practical-Guide-to-Context-Engineering)
+*   [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+*   [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy)
+*   [aistudio-gemini-proxy](https://github.com/zhongruichen/aistudio-gemini-proxy)
+*   [gcli2api](https://github.com/su-kaka/gcli2api)
+
 *   **License**: **CC BY-NC-SA 4.0**. Strictly for non-commercial use.
 *   **Security**: All account data is encrypted and stored locally in a SQLite database. Data never leaves your device unless sync is enabled.
 
